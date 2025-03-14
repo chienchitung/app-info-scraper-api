@@ -26,6 +26,20 @@ class AppInfo(BaseModel):
     ios_similar_app: Optional[str] = None
     similarity: Optional[str] = None
 
+    def to_dict(self) -> dict:
+        return {
+            "platform": self.platform,
+            "app_name": self.app_name,
+            "category": self.category,
+            "developer": self.developer,
+            "rating": self.rating,
+            "rating_count": self.rating_count,
+            "price": self.price,
+            "icon_url": self.icon_url,
+            "ios_similar_app": self.ios_similar_app,
+            "similarity": self.similarity
+        }
+
 class AppScraper:
     def __init__(self):
         self.setup_driver()
@@ -39,107 +53,127 @@ class AppScraper:
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-images')
         chrome_options.add_argument('--blink-settings=imagesEnabled=false')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-software-rasterizer')
+        chrome_options.add_argument('--disable-javascript')
+        chrome_options.add_argument('--disable-plugins')
+        chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.page_load_strategy = 'eager'
         
         service = Service(executable_path=os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver'))
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        self.driver.set_page_load_timeout(30)
+        self.driver.set_script_timeout(30)
 
     def calculate_similarity(self, str1: str, str2: str) -> float:
         return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
     async def scrape_ios_app(self, url: str) -> AppInfo:
         try:
-            self.driver.get(url)
-            time.sleep(2)
-            wait = WebDriverWait(self.driver, 5)
-
-            # 應用程式名稱
-            app_name = "未知名稱"
-            try:
-                app_name_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "product-header__title")))
-                app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
-            except Exception as e:
-                print(f"iOS - 提取應用程式名稱時出錯: {e}")
-
-            # 應用程式類別
-            category = "未知類別"
-            try:
-                category_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
-                for element in category_elements:
-                    text = element.text.strip()
-                    if "「" in text and "」" in text:
-                        category_match = re.search(r'「(.+?)」', text)
-                        if category_match:
-                            category = category_match.group(1)
-                            break
-            except Exception as e:
-                print(f"iOS - 提取類別時出錯: {e}")
-
-            # 開發者
-            developer = "未知開發者"
-            try:
-                developer_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__identity a")))
-                developer = developer_element.text.strip()
-            except Exception:
+            max_retries = 3
+            retry_count = 0
+            
+            while retry_count < max_retries:
                 try:
-                    developer_element = self.driver.find_element(By.CSS_SELECTOR, ".product-header__identity a")
-                    developer = developer_element.text.strip()
+                    self.driver.get(url)
+                    wait = WebDriverWait(self.driver, 10)
+                    
+                    # 應用程式名稱
+                    app_name = "未知名稱"
+                    try:
+                        app_name_element = wait.until(
+                            EC.presence_of_element_located((By.CLASS_NAME, "product-header__title")),
+                            message="Timeout waiting for app name"
+                        )
+                        app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
+                    except Exception as e:
+                        print(f"iOS - 提取應用程式名稱時出錯: {e}")
+                        
+                    # 應用程式類別
+                    category = "未知類別"
+                    try:
+                        category_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
+                        for element in category_elements:
+                            text = element.text.strip()
+                            if "「" in text and "」" in text:
+                                category_match = re.search(r'「(.+?)」', text)
+                                if category_match:
+                                    category = category_match.group(1)
+                                    break
+                    except Exception as e:
+                        print(f"iOS - 提取類別時出錯: {e}")
+
+                    # 開發者
+                    developer = "未知開發者"
+                    try:
+                        developer_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__identity a")))
+                        developer = developer_element.text.strip()
+                    except Exception:
+                        try:
+                            developer_element = self.driver.find_element(By.CSS_SELECTOR, ".product-header__identity a")
+                            developer = developer_element.text.strip()
+                        except Exception as e:
+                            print(f"iOS - 提取開發者時出錯: {e}")
+
+                    # 評分資訊
+                    rating = "未知評分"
+                    rating_count = "未知評分數"
+                    try:
+                        rating_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "we-rating-count")))
+                        rating_info = rating_element.text.strip()
+                        rating_match = re.search(r'([\d.]+)\s*•\s*([\d,.万]+)', rating_info)
+                        if rating_match:
+                            rating = rating_match.group(1)
+                            rating_count_raw = rating_match.group(2)
+                            if '万' in rating_count_raw:
+                                rating_count = int(float(rating_count_raw.replace('万', '')) * 10000)
+                            else:
+                                rating_count = int(rating_count_raw.replace(',', ''))
+                            rating_count = f"{rating_count:,}"
+                        else:
+                            rating = rating_info
+                    except Exception as e:
+                        print(f"iOS - 提取評分時出錯: {e}")
+
+                    # 價格
+                    price = "未知價格"
+                    try:
+                        price_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
+                        for element in price_elements:
+                            text = element.text.strip()
+                            if "免費" in text or "$" in text:
+                                price = text
+                                break
+                    except Exception as e:
+                        print(f"iOS - 提取價格時出錯: {e}")
+
+                    # 應用程式圖示 URL
+                    icon_url = "未知圖示URL"
+                    try:
+                        icon_elements = self.driver.find_elements(By.CSS_SELECTOR, "picture source[type='image/webp']")
+                        if icon_elements:
+                            icon_srcset = icon_elements[0].get_attribute("srcset")
+                            if icon_srcset:
+                                icon_url = icon_srcset.split(",")[0].split(" ")[0]
+                    except Exception as e:
+                        print(f"iOS - 提取圖示URL時出錯: {e}")
+
+                    return AppInfo(
+                        platform="iOS",
+                        app_name=app_name,
+                        category=category,
+                        developer=developer,
+                        rating=rating,
+                        rating_count=rating_count,
+                        price=price,
+                        icon_url=icon_url
+                    )
                 except Exception as e:
-                    print(f"iOS - 提取開發者時出錯: {e}")
-
-            # 評分資訊
-            rating = "未知評分"
-            rating_count = "未知評分數"
-            try:
-                rating_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "we-rating-count")))
-                rating_info = rating_element.text.strip()
-                rating_match = re.search(r'([\d.]+)\s*•\s*([\d,.万]+)', rating_info)
-                if rating_match:
-                    rating = rating_match.group(1)
-                    rating_count_raw = rating_match.group(2)
-                    if '万' in rating_count_raw:
-                        rating_count = int(float(rating_count_raw.replace('万', '')) * 10000)
-                    else:
-                        rating_count = int(rating_count_raw.replace(',', ''))
-                    rating_count = f"{rating_count:,}"
-                else:
-                    rating = rating_info
-            except Exception as e:
-                print(f"iOS - 提取評分時出錯: {e}")
-
-            # 價格
-            price = "未知價格"
-            try:
-                price_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
-                for element in price_elements:
-                    text = element.text.strip()
-                    if "免費" in text or "$" in text:
-                        price = text
-                        break
-            except Exception as e:
-                print(f"iOS - 提取價格時出錯: {e}")
-
-            # 應用程式圖示 URL
-            icon_url = "未知圖示URL"
-            try:
-                icon_elements = self.driver.find_elements(By.CSS_SELECTOR, "picture source[type='image/webp']")
-                if icon_elements:
-                    icon_srcset = icon_elements[0].get_attribute("srcset")
-                    if icon_srcset:
-                        icon_url = icon_srcset.split(",")[0].split(" ")[0]
-            except Exception as e:
-                print(f"iOS - 提取圖示URL時出錯: {e}")
-
-            return AppInfo(
-                platform="iOS",
-                app_name=app_name,
-                category=category,
-                developer=developer,
-                rating=rating,
-                rating_count=rating_count,
-                price=price,
-                icon_url=icon_url
-            )
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        raise e
+                    print(f"Retry {retry_count}/{max_retries} for URL: {url}")
+                    time.sleep(2)
         except Exception as e:
             print(f"iOS app 爬取錯誤: {e}")
             raise
