@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict
 from pydantic import BaseModel
 from scraper import AppScraper, AppInfo
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="App Info Scraper API",
@@ -18,6 +23,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up the application...")
+    try:
+        # Test Selenium setup
+        scraper = AppScraper()
+        logger.info("Successfully initialized AppScraper")
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
+        raise
 
 class UrlList(BaseModel):
     urls: List[str]
@@ -113,6 +129,11 @@ async def scrape_all(urls: UrlPair):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "message": "Service is running"}
+
 if __name__ == "__main__":
     import uvicorn
+    logger.info("Starting uvicorn server...")
     uvicorn.run(app, host="0.0.0.0", port=8000) 
