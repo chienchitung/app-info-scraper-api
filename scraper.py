@@ -306,12 +306,13 @@ class AppScraper:
             try:
                 logger.info(f"開始爬取 Android 應用程式: {url}")
                 self.driver.get(url)
-                wait = WebDriverWait(self.driver, 15)
+                wait = WebDriverWait(self.driver, 20)  # 增加等待時間至 20 秒
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")), message="頁面加載超時")
 
-                # 滾動頁面以觸發動態內容
-                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(1)
+                # 多次滾動頁面以觸發動態內容
+                for _ in range(2):
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)  # 增加等待時間至 2 秒
 
                 # 應用程式名稱
                 app_name = "未知名稱"
@@ -337,7 +338,9 @@ class AppScraper:
                 rating = "未知評分"
                 try:
                     rating_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".TT9eCd, div[aria-label*='獲評為']"))
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, ".TT9eCd, div[itemprop='starRating'] div, div[aria-label*='星']")
+                        )
                     )
                     rating_text = rating_element.text.strip() or rating_element.get_attribute("aria-label")
                     rating_match = re.search(r'(\d+\.?\d*)', rating_text)
@@ -345,15 +348,18 @@ class AppScraper:
                         rating = rating_match.group(1)
                     logger.info(f"提取評分: {rating}")
                 except Exception as e:
-                    logger.error(f"Android - 提取評分時出錯: {e}")
+                    logger.error(f"Android - 提取評分時出錯: {str(e)}")  # 記錄完整錯誤
 
                 # 評分數
                 rating_count = "未知評分數"
                 try:
                     rating_count_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".w7Iutd .wVqUob:first-child .g1rdde"))  # 精確定位評論數
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, ".g1rdde, .w7Iutd .wVqUob:nth-child(1) .g1rdde")  # 放寬條件
+                        )
                     )
                     rating_count_text = rating_count_element.text.strip()
+                    logger.debug(f"原始評分數文本: {rating_count_text}")  # 添加調試日誌
                     rating_count_text = re.sub(r'[^\d,.萬]', '', rating_count_text)
                     if "萬" in rating_count_text:
                         rating_count = int(float(rating_count_text.replace("萬", "")) * 10000)
@@ -364,25 +370,106 @@ class AppScraper:
                     rating_count = f"{rating_count:,}"
                     logger.info(f"提取評分數: {rating_count}")
                 except Exception as e:
-                    logger.error(f"Android - 提取評分數時出錯: {e}")
+                    logger.error(f"Android - 提取評分數時出錯: {str(e)}")
 
                 # 價格
                 price = "未知價格"
                 try:
                     try:
                         price_button = wait.until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label*='購買：']"))
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label*='購買']"))
                         )
                         price = price_button.get_attribute("aria-label").replace("購買：", "").strip()
                     except:
                         install_button = wait.until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label='安裝']"))
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label*='安裝']"))
                         )
                         if install_button:
                             price = "免費"
                     logger.info(f"提取價格: {price}")
                 except Exception as e:
-                    logger.error(f"Android - 提取價格時出錯: {e}")
+                    logger.error(f"Android - 提取價格時出錯: {str(e)}")
+
+                # 應用程式圖示 URL
+                icon_url = "未知圖示URL"
+                try:
+                    icon_element = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "img[itemprop='image']"))
+                    )
+                    if icon_element:
+                        icon_url = icon_element.get_attribute("src")
+                    logger.info(f"提取圖示 URL: {icon_url}")
+                except Exception as e:
+                    logger.error(f"Android - 提取圖示URL時出錯: {e}")
+
+                # 版本資訊和更新日期
+                version = "未知版本"
+                update_date = "未知更新日期"
+                try:
+                    logger.info("嘗試點擊版本資訊按鈕")
+                    button = wait.until(
+                        EC.element_to_be_clickable(
+                            (By.CSS_SELECTOR, "button.VfPpkd-Bz112c-LgbsSe.yHy1rc.eT1oJ.QDwDD.mN1ivc.VxpoF")
+                        )
+                    )
+                    self.driver.execute_script("arguments[0].click();", button)
+
+                    logger.info("等待版本資訊加載")
+                    wait.until(
+                        EC.visibility_of_element_located(
+                            (By.XPATH, "//div[@class='sMUprd'][div[text()='版本']]/div[@class='reAt0']")
+                        ),
+                        message="版本資訊未正確加載"
+                    )
+
+                    version_element = wait.until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//div[@class='sMUprd'][div[text()='版本']]/div[@class='reAt0']")
+                        )
+                    )
+                    version = version_element.text.strip()
+
+                    update_date_element = wait.until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//div[@class='sMUprd'][div[text()='更新日期']]/div[@class='reAt0']")
+                        )
+                    )
+                    update_date = update_date_element.text.strip()
+                    logger.info(f"提取版本: {version}, 更新日期: {update_date}")
+
+                except Exception as e:
+                    logger.error(f"Android - 提取版本或更新日期時出錯: {e}")
+
+                app_info = AppInfo(
+                    platform="Android",
+                    app_name=app_name,
+                    developer=developer,
+                    rating=rating,
+                    rating_count=rating_count,
+                    price=price,
+                    icon_url=icon_url,
+                    version=version,
+                    update_date=update_date
+                )
+
+                if ios_app_categories:
+                    matching_ios_app, similarity = self.find_most_similar_ios_app(app_name, ios_app_categories)
+                    if matching_ios_app:
+                        app_info.category = ios_app_categories[matching_ios_app]
+                        app_info.ios_similar_app = matching_ios_app
+                        app_info.similarity = f"{similarity:.2%}"
+                        logger.info(f"找到相似 iOS 應用: {matching_ios_app}, 相似度: {similarity:.2%}")
+
+                logger.info(f"Android 應用程式爬取完成: {app_name}")
+                return app_info
+
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"第 {retry_count}/{max_retries} 次重試，URL: {url}, 錯誤: {e}")
+                if retry_count >= max_retries:
+                    logger.error(f"Android app 爬取失敗，已達最大重試次數: {e}")
+                    raise
+                time.sleep(2)
 
                 # 應用程式圖示 URL
                 icon_url = "未知圖示URL"
