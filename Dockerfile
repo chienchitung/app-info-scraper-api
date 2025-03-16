@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     unzip \
     xvfb \
+    x11-utils \
     curl \
     fonts-liberation \
     libasound2 \
@@ -65,11 +66,21 @@ RUN chmod +x /usr/local/bin/chromedriver
 # 更新 entrypoint.sh
 RUN echo '#!/bin/bash\n\
     Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & \n\
-    sleep 1 \n\
-    until xdpyinfo -display :99 > /dev/null 2>&1; do \n\
-        echo "Waiting for Xvfb to be ready..." \n\
+    XVFB_PID=$! \n\
+    TIMEOUT=10 \n\
+    COUNT=0 \n\
+    until xdpyinfo -display :99 > /dev/null 2>&1 || [ $COUNT -ge $TIMEOUT ]; do \n\
+        echo "Waiting for Xvfb to be ready... ($COUNT/$TIMEOUT)" \n\
         sleep 1 \n\
+        COUNT=$((COUNT+1)) \n\
     done \n\
+    if [ $COUNT -ge $TIMEOUT ]; then \n\
+        echo "Xvfb failed to start within $TIMEOUT seconds" \n\
+        ps -ef | grep Xvfb \n\
+        kill $XVFB_PID 2>/dev/null \n\
+        exit 1 \n\
+    fi \n\
+    echo "Xvfb is ready" \n\
     exec "$@"' > /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
