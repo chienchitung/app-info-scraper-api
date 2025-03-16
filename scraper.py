@@ -23,6 +23,8 @@ class AppInfo(BaseModel):
     rating_count: str
     price: str
     icon_url: str
+    version: Optional[str] = None
+    update_date: Optional[str] = None
     ios_similar_app: Optional[str] = None
     similarity: Optional[str] = None
 
@@ -36,6 +38,8 @@ class AppInfo(BaseModel):
             "rating_count": self.rating_count,
             "price": self.price,
             "icon_url": self.icon_url,
+            "version": self.version,
+            "update_date": self.update_date,
             "ios_similar_app": self.ios_similar_app,
             "similarity": self.similarity
         }
@@ -46,21 +50,20 @@ class AppScraper:
 
     def setup_driver(self):
         chrome_options = webdriver.ChromeOptions()
-        chrome_options.add_argument('--headless')
+        # chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.binary_location = os.getenv('CHROME_BIN', '/usr/bin/chromium')
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-images')
         chrome_options.add_argument('--blink-settings=imagesEnabled=false')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--disable-software-rasterizer')
-        chrome_options.add_argument('--disable-javascript')
         chrome_options.add_argument('--disable-plugins')
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.page_load_strategy = 'eager'
         
-        service = Service(executable_path=os.getenv('CHROMEDRIVER_PATH', '/usr/bin/chromedriver'))
+        # 使用 webdriver_manager 自動下載和管理 ChromeDriver
+        service = Service(ChromeDriverManager().install())
         self.driver = webdriver.Chrome(service=service, options=chrome_options)
         self.driver.set_page_load_timeout(30)
         self.driver.set_script_timeout(30)
@@ -82,16 +85,25 @@ class AppScraper:
                     app_name = "未知名稱"
                     try:
                         app_name_element = wait.until(
-                            EC.presence_of_element_located((By.CLASS_NAME, "product-header__title")),
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "h1.product-header__title")),
                             message="Timeout waiting for app name"
                         )
                         app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
                     except Exception as e:
-                        print(f"iOS - 提取應用程式名稱時出錯: {e}")
+                        try:
+                            # 嘗試備用選擇器
+                            app_name_element = wait.until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__title")),
+                                message="Timeout waiting for app name (backup selector)"
+                            )
+                            app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
+                        except Exception as backup_e:
+                            print(f"iOS - 提取應用程式名稱時出錯: {e} and backup error: {backup_e}")
                         
                     # 應用程式類別
                     category = "未知類別"
                     try:
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".inline-list__item")))
                         category_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
                         for element in category_elements:
                             text = element.text.strip()
@@ -106,22 +118,22 @@ class AppScraper:
                     # 開發者
                     developer = "未知開發者"
                     try:
-                        developer_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__identity a")))
+                        developer_element = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__identity a, .product-header__identity a"))
+                        )
                         developer = developer_element.text.strip()
-                    except Exception:
-                        try:
-                            developer_element = self.driver.find_element(By.CSS_SELECTOR, ".product-header__identity a")
-                            developer = developer_element.text.strip()
-                        except Exception as e:
-                            print(f"iOS - 提取開發者時出錯: {e}")
+                    except Exception as e:
+                        print(f"iOS - 提取開發者時出錯: {e}")
 
                     # 評分資訊
                     rating = "未知評分"
                     rating_count = "未知評分數"
                     try:
-                        rating_element = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "we-rating-count")))
+                        rating_element = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, ".we-rating-count, .star-rating__count"))
+                        )
                         rating_info = rating_element.text.strip()
-                        rating_match = re.search(r'([\d.]+)\s*•\s*([\d,.万]+)', rating_info)
+                        rating_match = re.search(r'([\d.]+)\s*[•·]\s*([\d,.万]+)', rating_info)
                         if rating_match:
                             rating = rating_match.group(1)
                             rating_count_raw = rating_match.group(2)
@@ -138,6 +150,7 @@ class AppScraper:
                     # 價格
                     price = "未知價格"
                     try:
+                        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".inline-list__item")))
                         price_elements = self.driver.find_elements(By.CSS_SELECTOR, ".inline-list__item")
                         for element in price_elements:
                             text = element.text.strip()
@@ -150,13 +163,56 @@ class AppScraper:
                     # 應用程式圖示 URL
                     icon_url = "未知圖示URL"
                     try:
-                        icon_elements = self.driver.find_elements(By.CSS_SELECTOR, "picture source[type='image/webp']")
-                        if icon_elements:
-                            icon_srcset = icon_elements[0].get_attribute("srcset")
-                            if icon_srcset:
-                                icon_url = icon_srcset.split(",")[0].split(" ")[0]
+                        icon_elements = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "picture source[type='image/webp']"))
+                        )
+                        icon_srcset = icon_elements.get_attribute("srcset")
+                        if icon_srcset:
+                            icon_url = icon_srcset.split(",")[0].split(" ")[0]
                     except Exception as e:
-                        print(f"iOS - 提取圖示URL時出錯: {e}")
+                        try:
+                            # 嘗試備用選擇器
+                            icon_element = wait.until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, ".we-artwork__source"))
+                            )
+                            icon_url = icon_element.get_attribute("srcset").split(",")[0].split(" ")[0]
+                        except Exception as backup_e:
+                            print(f"iOS - 提取圖示URL時出錯: {e} and backup error: {backup_e}")
+
+                    # 版本資訊和更新日期
+                    version = "未知版本"
+                    update_date = "未知更新日期"
+                    try:
+                        # 點擊版本紀錄按鈕
+                        version_button = wait.until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, "button.we-modal__show.link"))
+                        )
+                        self.driver.execute_script("arguments[0].click();", version_button)
+                        time.sleep(1)  # 等待視窗內容加載
+                        
+                        # 獲取最新版本號
+                        version_element = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, ".version-history__item__version-number"))
+                        )
+                        version = version_element.text.strip()
+                        
+                        # 獲取更新日期
+                        date_element = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, ".version-history__item__release-date"))
+                        )
+                        update_date = date_element.text.strip()
+                        
+                        # 關閉版本歷史視窗
+                        try:
+                            close_button = wait.until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, ".we-modal__close"))
+                            )
+                            self.driver.execute_script("arguments[0].click();", close_button)
+                        except Exception:
+                            pass
+                        
+                    except Exception as e:
+                        print(f"iOS - 提取版本或更新日期時出錯: {e}")
 
                     return AppInfo(
                         platform="iOS",
@@ -166,7 +222,9 @@ class AppScraper:
                         rating=rating,
                         rating_count=rating_count,
                         price=price,
-                        icon_url=icon_url
+                        icon_url=icon_url,
+                        version=version,
+                        update_date=update_date
                     )
                 except Exception as e:
                     retry_count += 1
@@ -247,6 +305,31 @@ class AppScraper:
             except Exception as e:
                 print(f"Android - 提取圖示URL時出錯: {e}")
 
+            # 版本資訊和更新日期
+            version = "未知版本"
+            update_date = "未知更新日期"
+            try:
+                # 點擊按鈕以打開版本和更新日期視窗
+                button = wait.until(EC.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "button.VfPpkd-Bz112c-LgbsSe.yHy1rc.eT1oJ.QDwDD.mN1ivc.VxpoF")
+                ))
+                button.click()
+                time.sleep(2)  # 等待視窗內容加載
+
+                # 抓取版本
+                version_element = wait.until(EC.presence_of_element_located(
+                    (By.XPATH, "//div[@class='sMUprd'][div[text()='版本']]/div[@class='reAt0']")
+                ))
+                version = version_element.text.strip()
+
+                # 抓取更新日期
+                update_date_element = wait.until(EC.presence_of_element_located(
+                    (By.XPATH, "//div[@class='sMUprd'][div[text()='更新日期']]/div[@class='reAt0']")
+                ))
+                update_date = update_date_element.text.strip()
+            except Exception as e:
+                print(f"Android - 提取版本或更新日期時出錯: {e}")
+
             app_info = AppInfo(
                 platform="Android",
                 app_name=app_name,
@@ -254,7 +337,9 @@ class AppScraper:
                 rating=rating,
                 rating_count=rating_count,
                 price=price,
-                icon_url=icon_url
+                icon_url=icon_url,
+                version=version,
+                update_date=update_date
             )
 
             if ios_app_categories:
