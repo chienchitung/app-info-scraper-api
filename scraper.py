@@ -306,7 +306,7 @@ class AppScraper:
             try:
                 logger.info(f"開始爬取 Android 應用程式: {url}")
                 self.driver.get(url)
-                wait = WebDriverWait(self.driver, 15)  # 增加等待時間至 15 秒
+                wait = WebDriverWait(self.driver, 10)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")), message="頁面加載超時")
 
                 # 滾動頁面以確保動態內容加載
