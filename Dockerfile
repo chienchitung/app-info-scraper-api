@@ -7,7 +7,6 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     unzip \
     xvfb \
-    x11-utils \
     curl \
     fonts-liberation \
     libasound2 \
@@ -63,26 +62,15 @@ ENV SELENIUM_DRIVER_CHROME_OPTIONS="--no-sandbox --disable-dev-shm-usage --disab
 # 確保 chromedriver 具有執行權限
 RUN chmod +x /usr/local/bin/chromedriver
 
-# 更新 entrypoint.sh
+# 建立啟動虛擬顯示器的腳本
 RUN echo '#!/bin/bash\n\
-    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & \n\
-    XVFB_PID=$! \n\
-    TIMEOUT=10 \n\
-    COUNT=0 \n\
-    until xdpyinfo -display :99 > /dev/null 2>&1 || [ $COUNT -ge $TIMEOUT ]; do \n\
-        echo "Waiting for Xvfb to be ready... ($COUNT/$TIMEOUT)" \n\
-        sleep 1 \n\
-        COUNT=$((COUNT+1)) \n\
-    done \n\
-    if [ $COUNT -ge $TIMEOUT ]; then \n\
-        echo "Xvfb failed to start within $TIMEOUT seconds" \n\
-        ps -ef | grep Xvfb \n\
-        kill $XVFB_PID 2>/dev/null \n\
-        exit 1 \n\
-    fi \n\
-    echo "Xvfb is ready" \n\
-    exec "$@"' > /entrypoint.sh \
-    && chmod +x /entrypoint.sh
+    if [ ! -e /tmp/.X99-lock ]; then\n\
+        Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & \n\
+        while [ ! -e /tmp/.X99-lock ]; do\n\
+            sleep 0.1\n\
+        done\n\
+    fi' > /usr/local/bin/start-xvfb.sh \
+    && chmod +x /usr/local/bin/start-xvfb.sh
 
 # 開放連接埠
 EXPOSE 8000
@@ -90,9 +78,6 @@ EXPOSE 8000
 # 設定健康檢查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
-
-# 使用自定義入口點
-ENTRYPOINT ["/entrypoint.sh"]
 
 # 啟動應用程式
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]
