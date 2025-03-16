@@ -50,7 +50,7 @@ class AppScraper:
 
     def setup_driver(self):
         chrome_options = webdriver.ChromeOptions()
-        # chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-extensions')
@@ -62,9 +62,25 @@ class AppScraper:
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.page_load_strategy = 'eager'
         
-        # 使用 webdriver_manager 自動下載和管理 ChromeDriver
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        # 檢查是否在Docker環境中
+        if os.environ.get('CHROME_BIN') and os.path.exists('/usr/bin/chromium'):
+            # 在Docker環境中，直接使用已安裝的chromium
+            chrome_options.binary_location = '/usr/bin/chromium'
+            self.driver = webdriver.Chrome(options=chrome_options)
+        else:
+            # 在本地環境中，使用webdriver_manager
+            try:
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            except Exception as e:
+                print(f"使用ChromeDriverManager失敗: {e}")
+                # 嘗試直接使用系統中的chromedriver
+                try:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                except Exception as e2:
+                    print(f"直接使用Chrome失敗: {e2}")
+                    raise
+        
         self.driver.set_page_load_timeout(30)
         self.driver.set_script_timeout(30)
 
@@ -79,8 +95,9 @@ class AppScraper:
             while retry_count < max_retries:
                 try:
                     self.driver.get(url)
-                    wait = WebDriverWait(self.driver, 10)
-                    
+                    time.sleep(2)
+                    wait = WebDriverWait(self.driver, 5)
+ 
                     # 應用程式名稱
                     app_name = "未知名稱"
                     try:
