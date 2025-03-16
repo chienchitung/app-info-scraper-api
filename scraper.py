@@ -76,6 +76,8 @@ class AppScraper:
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--headless')  # 添加 headless 模式
+        chrome_options.add_argument('--disable-features=NetworkService')
+        chrome_options.add_argument('--disable-features=VizDisplayCompositor')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-images')
@@ -85,6 +87,7 @@ class AppScraper:
         chrome_options.add_argument('--disable-plugins')
         chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.add_argument('--remote-debugging-port=9222')  # 添加遠程調試端口
+        chrome_options.add_argument('--lang=zh-TW')  # 添加語言設置
         chrome_options.page_load_strategy = 'eager'
         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
 
@@ -303,8 +306,12 @@ class AppScraper:
             try:
                 logger.info(f"開始爬取 Android 應用程式: {url}")
                 self.driver.get(url)
-                wait = WebDriverWait(self.driver, 10)
+                wait = WebDriverWait(self.driver, 15)  # 增加等待時間至 15 秒
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")), message="頁面加載超時")
+
+                # 滾動頁面以確保動態內容加載
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)  # 等待動態內容加載
 
                 # 應用程式名稱
                 app_name = "未知名稱"
@@ -329,8 +336,11 @@ class AppScraper:
                 # 評分
                 rating = "未知評分"
                 try:
-                    rating_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".TT9eCd")))
-                    rating_match = re.search(r'(\d+\.?\d*)', rating_element.text.strip())
+                    rating_element = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".TT9eCd, div[aria-label*='星級']"))  # 添加備用選擇器
+                    )
+                    rating_text = rating_element.text.strip() or rating_element.get_attribute("aria-label")
+                    rating_match = re.search(r'(\d+\.?\d*)', rating_text)
                     if rating_match:
                         rating = rating_match.group(1)
                     logger.info(f"提取評分: {rating}")
@@ -340,14 +350,18 @@ class AppScraper:
                 # 評分數
                 rating_count = "未知評分數"
                 try:
-                    rating_count_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".g1rdde")))
-                    rating_count = rating_count_element.text.strip()
-                    if "評論" in rating_count:
-                        rating_count = rating_count.replace("則評論", "").strip()
-                    if "萬" in rating_count:
-                        rating_count = int(float(rating_count.replace("萬", "")) * 10000)
+                    rating_count_element = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".g1rdde, .EymY4b span:nth-child(2)"))  # 添加備用選擇器
+                    )
+                    rating_count_text = rating_count_element.text.strip()
+                    # 清理並轉換評分數
+                    rating_count_text = re.sub(r'[^\d,.萬]', '', rating_count_text)  # 移除非數字字符
+                    if "萬" in rating_count_text:
+                        rating_count = int(float(rating_count_text.replace("萬", "")) * 10000)
+                    elif rating_count_text:
+                        rating_count = int(rating_count_text.replace(",", ""))
                     else:
-                        rating_count = int(rating_count.replace(",", ""))
+                        rating_count = 0
                     rating_count = f"{rating_count:,}"
                     logger.info(f"提取評分數: {rating_count}")
                 except Exception as e:
@@ -357,10 +371,14 @@ class AppScraper:
                 price = "未知價格"
                 try:
                     try:
-                        price_button = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label*='購買：$']")))
+                        price_button = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label*='購買：']"))
+                        )
                         price = price_button.get_attribute("aria-label").replace("購買：", "").strip()
                     except:
-                        install_button = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label='安裝']")))
+                        install_button = wait.until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "button[aria-label='安裝']"))
+                        )
                         if install_button:
                             price = "免費"
                     logger.info(f"提取價格: {price}")
@@ -370,7 +388,9 @@ class AppScraper:
                 # 應用程式圖示 URL
                 icon_url = "未知圖示URL"
                 try:
-                    icon_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "img[itemprop='image']")))
+                    icon_element = wait.until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "img[itemprop='image']"))
+                    )
                     if icon_element:
                         icon_url = icon_element.get_attribute("src")
                     logger.info(f"提取圖示 URL: {icon_url}")
@@ -383,7 +403,7 @@ class AppScraper:
                 try:
                     logger.info("嘗試點擊版本資訊按鈕")
                     button = wait.until(
-                        EC.presence_of_element_located(
+                        EC.element_to_be_clickable(  # 使用 element_to_be_clickable
                             (By.CSS_SELECTOR, "button.VfPpkd-Bz112c-LgbsSe.yHy1rc.eT1oJ.QDwDD.mN1ivc.VxpoF")
                         )
                     )
