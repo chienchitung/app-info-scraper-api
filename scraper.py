@@ -75,6 +75,7 @@ class AppScraper:
     def setup_driver(self):
         chrome_options = webdriver.ChromeOptions()
         chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--headless')  # 添加 headless 模式
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-images')
@@ -83,6 +84,7 @@ class AppScraper:
         chrome_options.add_argument('--disable-software-rasterizer')
         chrome_options.add_argument('--disable-plugins')
         chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--remote-debugging-port=9222')  # 添加遠程調試端口
         chrome_options.page_load_strategy = 'eager'
         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
 
