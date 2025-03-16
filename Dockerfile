@@ -69,4 +69,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # 啟動應用程式，啟動時啟用虛擬顯示器
-CMD ["/usr/local/bin/start-xvfb.sh && uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]
+CMD ["/bin/bash", "-c", "/usr/local/bin/start-xvfb.sh && uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 75"]
