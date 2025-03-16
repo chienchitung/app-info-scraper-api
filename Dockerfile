@@ -37,17 +37,10 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 安裝固定版本的 ChromeDriver (與 Chrome 123 相容)
-RUN wget -q "https://storage.googleapis.com/chrome-for-testing-public/123.0.6312.86/linux64/chromedriver-linux64.zip" \
-    && unzip chromedriver-linux64.zip \
-    && mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf chromedriver-linux64.zip chromedriver-linux64
-
 # 設定工作目錄
 WORKDIR /app
 
-# 複製專案檔案
+# 複製並安裝 Python 依賴
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
@@ -56,11 +49,7 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
 ENV SELENIUM_DRIVER_CHROME_OPTIONS="--no-sandbox --disable-dev-shm-usage --disable-gpu --headless --remote-debugging-port=9222 --disable-software-rasterizer --user-agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'"
-
-# 確保 chromedriver 具有執行權限
-RUN chmod +x /usr/local/bin/chromedriver
 
 # 建立啟動虛擬顯示器的腳本
 RUN echo '#!/bin/bash\n\
@@ -79,5 +68,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# 啟動應用程式
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]
+# 啟動應用程式，啟動時啟用虛擬顯示器
+CMD ["/usr/local/bin/start-xvfb.sh && uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]
