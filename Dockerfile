@@ -37,9 +37,8 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 安裝特定版本的 ChromeDriver（這裡使用一個已知的穩定版本）
-RUN CHROME_MAJOR_VERSION=$(google-chrome --version | grep -oE '[0-9]+' | head -1) \
-    && wget -q "https://storage.googleapis.com/chrome-for-testing-public/$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_MAJOR_VERSION})/linux64/chromedriver-linux64.zip" \
+# 安裝固定版本的 ChromeDriver (與 Chrome 123 相容)
+RUN wget -q "https://storage.googleapis.com/chrome-for-testing-public/123.0.6312.86/linux64/chromedriver-linux64.zip" \
     && unzip chromedriver-linux64.zip \
     && mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
     && chmod +x /usr/local/bin/chromedriver \
