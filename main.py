@@ -6,9 +6,38 @@ from scraper import AppScraper, AppInfo
 import logging
 import asyncio
 from fastapi.responses import JSONResponse
+import sys
+import io
+import os
+
+# 設置環境變數確保UTF-8編碼
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['LC_ALL'] = 'C.UTF-8'
+os.environ['LANG'] = 'C.UTF-8'
+
+# 強制設置 UTF-8 編碼
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+else:
+    # 對於不支持reconfigure的環境，使用替代方法
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+if os.path.exists('api.log'):
+    os.remove('api.log')
+with open('api.log', 'wb') as f:
+    f.write(b'\xef\xbb\xbf')  # 寫入 UTF-8 BOM
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(os.path.join(os.environ.get('LOG_DIR', '.'), 'api.log'), encoding='utf-8-sig', mode='a')
+    ]
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

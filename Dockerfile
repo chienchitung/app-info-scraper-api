@@ -37,10 +37,9 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# 安裝 ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
-    && wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip" \
+# 動態下載匹配的 ChromeDriver
+RUN CHROME_VERSION=$(google-chrome --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') \
+    && wget -q "https://chromedriver.storage.googleapis.com/$(wget -q -O - https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION})/chromedriver_linux64.zip" \
     && unzip chromedriver_linux64.zip \
     && mv chromedriver /usr/local/bin/chromedriver \
     && chmod +x /usr/local/bin/chromedriver \
@@ -51,11 +50,7 @@ WORKDIR /app
 
 # 複製專案檔案
 COPY requirements.txt .
-
-# 安裝 Python 套件
 RUN pip install --no-cache-dir -r requirements.txt
-
-# 複製其餘檔案
 COPY . .
 
 # 設定環境變數
@@ -63,15 +58,20 @@ ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 ENV CHROME_BIN=/usr/bin/google-chrome
 ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
-
-# 設定 Chrome 選項 - 優化Docker環境中的運行
-ENV SELENIUM_DRIVER_CHROME_OPTIONS="--headless --no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --disable-extensions --remote-debugging-port=9222 --memory-pressure-off --disable-features=VizDisplayCompositor --disable-web-security --disable-site-isolation-trials --disable-features=IsolateOrigins,site-per-process --disable-blink-features=AutomationControlled"
+ENV SELENIUM_DRIVER_CHROME_OPTIONS="--no-sandbox --disable-dev-shm-usage --disable-gpu --remote-debugging-port=9222 --user-agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'"
 
 # 確保 chromedriver 具有執行權限
 RUN chmod +x /usr/local/bin/chromedriver
 
-# 增加虛擬顯示器設定
-RUN echo '#!/bin/bash\nXvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &\nexec "$@"' > /entrypoint.sh \
+# 更新 entrypoint.sh
+RUN echo '#!/bin/bash\n\
+    Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset & \n\
+    sleep 1 \n\
+    until xdpyinfo -display :99 > /dev/null 2>&1; do \n\
+        echo "Waiting for Xvfb to be ready..." \n\
+        sleep 1 \n\
+    done \n\
+    exec "$@"' > /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
 # 開放連接埠
@@ -81,8 +81,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# 使用自定義入口點啟動虛擬顯示器
+# 使用自定義入口點
 ENTRYPOINT ["/entrypoint.sh"]
 
-# 啟動應用程式，加入 timeout 設定
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"] 
+# 啟動應用程式
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "75"]

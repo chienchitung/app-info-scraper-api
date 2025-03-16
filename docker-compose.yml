@@ -8,8 +8,13 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - LOG_DIR=/app/log
     volumes:
       - .:/app
+      - ./log:/app/log
     restart: unless-stopped
     networks:
       - app-network
