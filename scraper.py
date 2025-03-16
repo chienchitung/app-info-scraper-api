@@ -306,12 +306,12 @@ class AppScraper:
             try:
                 logger.info(f"開始爬取 Android 應用程式: {url}")
                 self.driver.get(url)
-                wait = WebDriverWait(self.driver, 10)
+                wait = WebDriverWait(self.driver, 15)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")), message="頁面加載超時")
 
-                # 滾動頁面以確保動態內容加載
+                # 滾動頁面以觸發動態內容
                 self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(1)  # 等待動態內容加載
+                time.sleep(1)
 
                 # 應用程式名稱
                 app_name = "未知名稱"
@@ -337,7 +337,7 @@ class AppScraper:
                 rating = "未知評分"
                 try:
                     rating_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".TT9eCd, div[aria-label*='星級']"))  # 添加備用選擇器
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".TT9eCd, div[aria-label*='獲評為']"))
                     )
                     rating_text = rating_element.text.strip() or rating_element.get_attribute("aria-label")
                     rating_match = re.search(r'(\d+\.?\d*)', rating_text)
@@ -351,11 +351,10 @@ class AppScraper:
                 rating_count = "未知評分數"
                 try:
                     rating_count_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".g1rdde, .EymY4b span:nth-child(2)"))  # 添加備用選擇器
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".w7Iutd .wVqUob:first-child .g1rdde"))  # 精確定位評論數
                     )
                     rating_count_text = rating_count_element.text.strip()
-                    # 清理並轉換評分數
-                    rating_count_text = re.sub(r'[^\d,.萬]', '', rating_count_text)  # 移除非數字字符
+                    rating_count_text = re.sub(r'[^\d,.萬]', '', rating_count_text)
                     if "萬" in rating_count_text:
                         rating_count = int(float(rating_count_text.replace("萬", "")) * 10000)
                     elif rating_count_text:
