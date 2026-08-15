@@ -8,6 +8,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 import concurrent.futures
 import pandas as pd
 import re
+import json
 import time
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional
@@ -121,6 +122,22 @@ class AppScraper:
 
     def calculate_similarity(self, str1: str, str2: str) -> float:
         return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+
+    def _get_android_json_ld(self) -> dict:
+        """解析 Google Play 頁面內嵌的 Schema.org JSON-LD 結構化資料。
+        比起會隨版面更新而改變的 hashed CSS class，這是較穩定的備援資料來源。"""
+        try:
+            script_elements = self.driver.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
+            for script_elem in script_elements:
+                try:
+                    data = json.loads(script_elem.get_attribute("innerHTML"))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if isinstance(data, dict) and data.get("@type") == "SoftwareApplication":
+                    return data
+        except Exception as e:
+            logger.warning(f"Android - 解析 JSON-LD 時出錯: {e}")
+        return {}
 
     def scrape_ios_app(self, url: str) -> AppInfo:
         max_retries = 3
@@ -291,6 +308,9 @@ class AppScraper:
                     self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(2)
 
+                # 解析頁面內嵌的 JSON-LD 結構化資料，作為 CSS class 選取器失效時的備援來源
+                json_ld = self._get_android_json_ld()
+
                 # 應用程式名稱
                 app_name = "未知名稱"
                 try:
@@ -299,6 +319,9 @@ class AppScraper:
                     logger.info(f"提取應用程式名稱: {app_name}")
                 except Exception as e:
                     logger.error(f"Android - 提取應用程式名稱時出錯: {e}")
+                if app_name == "未知名稱" and json_ld.get("name"):
+                    app_name = json_ld["name"]
+                    logger.info(f"使用 JSON-LD 備援提取應用程式名稱: {app_name}")
 
                 # 開發者
                 developer = "未知開發者"
@@ -310,6 +333,9 @@ class AppScraper:
                     logger.info(f"提取開發者: {developer}")
                 except Exception as e:
                     logger.error(f"Android - 提取開發者時出錯: {e}")
+                if developer == "未知開發者" and json_ld.get("author", {}).get("name"):
+                    developer = json_ld["author"]["name"]
+                    logger.info(f"使用 JSON-LD 備援提取開發者: {developer}")
 
                 # 評分
                 rating = "未知評分"
@@ -326,6 +352,12 @@ class AppScraper:
                     logger.info(f"提取評分: {rating}")
                 except Exception as e:
                     logger.error(f"Android - 提取評分時出錯: {str(e)}")
+                if rating == "未知評分" and json_ld.get("aggregateRating", {}).get("ratingValue"):
+                    try:
+                        rating = f"{float(json_ld['aggregateRating']['ratingValue']):.1f}"
+                        logger.info(f"使用 JSON-LD 備援提取評分: {rating}")
+                    except (TypeError, ValueError):
+                        pass
 
                 # 評分數
                 rating_count = "未知評分數"
@@ -339,7 +371,7 @@ class AppScraper:
                             break
                     if not rating_count_text:
                         raise Exception("未找到評論數元素")
-                    
+
                     logger.debug(f"原始評分數文本: {rating_count_text}")
                     rating_count_text = re.sub(r'[^\d,.萬]', '', rating_count_text)
                     if "萬" in rating_count_text:
@@ -352,22 +384,39 @@ class AppScraper:
                     logger.info(f"提取評分數: {rating_count}")
                 except Exception as e:
                     logger.error(f"Android - 提取評分數時出錯: {str(e)}")
+                    if json_ld.get("aggregateRating", {}).get("ratingCount"):
+                        try:
+                            rating_count = f"{int(json_ld['aggregateRating']['ratingCount']):,}"
+                            logger.info(f"使用 JSON-LD 備援提取評分數: {rating_count}")
+                        except (TypeError, ValueError):
+                            pass
 
                 # 價格
                 price = "免費"  # 默認為免費
                 try:
                     price_elements = self.driver.find_elements(By.CSS_SELECTOR, "button[aria-label*='購買'], button[aria-label*='安裝']")
+                    price_determined = False
                     for elem in price_elements:
                         aria_label = elem.get_attribute("aria-label")
                         if "購買" in aria_label:
                             price = aria_label.replace("購買：", "").strip()
+                            price_determined = True
                         elif "安裝" in aria_label:
                             price = "免費"
+                            price_determined = True
                             break
+                    if not price_determined:
+                        raise Exception("未找到價格按鈕")
                     logger.info(f"提取價格: {price}")
                 except Exception as e:
                     logger.error(f"Android - 提取價格時出錯: {str(e)}")
-                    price = "免費"  # 失敗時默認為免費
+                    offer = (json_ld.get("offers") or [{}])[0]
+                    offer_price = offer.get("price")
+                    if offer_price and offer_price != "0":
+                        price = f"{offer.get('priceCurrency', '')} {offer_price}".strip()
+                        logger.info(f"使用 JSON-LD 備援提取價格: {price}")
+                    else:
+                        price = "免費"  # 失敗時默認為免費
 
                 # 應用程式圖示 URL
                 icon_url = "未知圖示URL"
@@ -380,48 +429,50 @@ class AppScraper:
                     logger.info(f"提取圖示 URL: {icon_url}")
                 except Exception as e:
                     logger.error(f"Android - 提取圖示URL時出錯: {e}")
+                if icon_url == "未知圖示URL" and json_ld.get("image"):
+                    icon_url = json_ld["image"]
+                    logger.info(f"使用 JSON-LD 備援提取圖示 URL: {icon_url}")
 
-                # 版本資訊和更新日期
-                version = "未知版本"
+                # 類別（Google Play 商店頁面上直接顯示的分類文字）
+                category = None
+                try:
+                    genre_element = self.driver.find_element(By.CSS_SELECTOR, "[itemprop='genre']")
+                    genre_text = genre_element.text.strip()
+                    if genre_text:
+                        category = genre_text
+                        logger.info(f"提取類別: {category}")
+                except Exception as e:
+                    logger.warning(f"Android - 提取類別時出錯: {e}")
+
+                # 更新日期：頁面直接顯示於「更新日期」標籤旁，不再需要點擊展開
                 update_date = "未知更新日期"
                 try:
-                    logger.info("嘗試點擊版本資訊按鈕")
-                    button = wait.until(
-                        EC.element_to_be_clickable(
-                            (By.CSS_SELECTOR, "button.VfPpkd-Bz112c-LgbsSe.yHy1rc.eT1oJ.QDwDD.mN1ivc.VxpoF")
-                        )
-                    )
-                    self.driver.execute_script("arguments[0].click();", button)
-
-                    logger.info("等待版本資訊加載")
-                    wait.until(
-                        EC.visibility_of_element_located(
-                            (By.XPATH, "//div[@class='sMUprd'][div[text()='版本']]/div[@class='reAt0']")
-                        ),
-                        message="版本資訊未正確加載"
-                    )
-
-                    version_element = wait.until(
-                        EC.presence_of_element_located(
-                            (By.XPATH, "//div[@class='sMUprd'][div[text()='版本']]/div[@class='reAt0']")
-                        )
-                    )
-                    version = version_element.text.strip()
-
                     update_date_element = wait.until(
                         EC.presence_of_element_located(
-                            (By.XPATH, "//div[@class='sMUprd'][div[text()='更新日期']]/div[@class='reAt0']")
+                            (By.XPATH, "//div[text()='更新日期']/following-sibling::div[1]")
                         )
                     )
                     update_date = update_date_element.text.strip()
-                    logger.info(f"提取版本: {version}, 更新日期: {update_date}")
-
+                    logger.info(f"提取更新日期: {update_date}")
                 except Exception as e:
-                    logger.error(f"Android - 提取版本或更新日期時出錯: {e}")
+                    logger.error(f"Android - 提取更新日期時出錯: {e}")
+
+                # 版本號：Google Play 目前的頁面版型已不再公開顯示應用程式版本號，
+                # 若頁面仍提供則嘗試抓取，抓不到視為正常情況（非錯誤）
+                version = "未知版本"
+                try:
+                    version_element = self.driver.find_element(
+                        By.XPATH, "//div[text()='目前版本' or text()='版本']/following-sibling::div[1]"
+                    )
+                    version = version_element.text.strip()
+                    logger.info(f"提取版本: {version}")
+                except Exception:
+                    logger.info("Android - 頁面未提供版本號資訊（Google Play 新版型的常見情況）")
 
                 app_info = AppInfo(
                     platform="Android",
                     app_name=app_name,
+                    category=category,
                     developer=developer,
                     rating=rating,
                     rating_count=rating_count,
