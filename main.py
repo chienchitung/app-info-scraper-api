@@ -26,16 +26,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 共用單一 WebDriver 實例，避免每個請求都開一顆新的 Chrome（記憶體有限的環境很容易被 OOM）
+scraper: AppScraper = None
+# Selenium 的 driver 不是併發安全的，用 Lock 把所有爬取請求序列化
+scraper_lock = asyncio.Lock()
+SCRAPE_TIMEOUT = 90
+
+
+async def run_scrape(func, *args):
+    async with scraper_lock:
+        return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=SCRAPE_TIMEOUT)
+
+
 @app.on_event("startup")
 async def startup_event():
+    global scraper
     logger.info("Starting up the application...")
     try:
-        # Test Selenium setup
         scraper = AppScraper()
         logger.info("Successfully initialized AppScraper")
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
         raise
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if scraper:
+        scraper.close()
+
 
 class UrlList(BaseModel):
     urls: List[str]
@@ -52,26 +71,16 @@ async def root():
 async def scrape_ios(urls: UrlList):
     try:
         logger.info(f"開始處理 iOS URLs: {urls.urls}")
-        scraper = AppScraper()
-        results = []
-        
-        # 使用 semaphore 限制並發數
-        sem = asyncio.Semaphore(2)
-        
+
         async def scrape_with_timeout(url):
             try:
-                async with sem:
-                    # 設置 60 秒超時
-                    result = await asyncio.wait_for(
-                        scraper.scrape_ios_app(url),
-                        timeout=60
-                    )
-                    logger.info(f"成功爬取 URL: {url}")
-                    return result.to_dict() if isinstance(result, AppInfo) else result
+                result = await run_scrape(scraper.scrape_ios_app, url)
+                logger.info(f"成功爬取 URL: {url}")
+                return result.to_dict() if isinstance(result, AppInfo) else result
             except asyncio.TimeoutError:
                 logger.error(f"處理超時: {url}")
                 return {
-                    "error": "Request timeout after 60 seconds",
+                    "error": f"Request timeout after {SCRAPE_TIMEOUT} seconds",
                     "url": url
                 }
             except Exception as e:
@@ -80,11 +89,12 @@ async def scrape_ios(urls: UrlList):
                     "error": f"處理 URL 時出錯: {str(e)}",
                     "url": url
                 }
-        
-        # 並行處理所有 URL
+
+        # driver 是共用的，實際爬取仍會被 scraper_lock 序列化，
+        # 這裡用 gather 只是保留「一個 URL 失敗不影響其他 URL」的錯誤隔離
         tasks = [scrape_with_timeout(url) for url in urls.urls]
         results = await asyncio.gather(*tasks)
-        
+
         logger.info("所有 URL 處理完成")
         return results
     except Exception as e:
@@ -94,12 +104,17 @@ async def scrape_ios(urls: UrlList):
 @app.post("/scrape/android")
 async def scrape_android(urls: UrlList):
     try:
-        scraper = AppScraper()
         results = []
         for url in urls.urls:
             try:
-                result = await scraper.scrape_android_app(url)
+                result = await run_scrape(scraper.scrape_android_app, url)
                 results.append(result.to_dict() if isinstance(result, AppInfo) else result)
+            except asyncio.TimeoutError:
+                logger.error(f"處理超時: {url}")
+                results.append({
+                    "error": f"Request timeout after {SCRAPE_TIMEOUT} seconds",
+                    "url": url
+                })
             except Exception as e:
                 logger.error(f"處理 Android URL 時出錯: {url}, 錯誤: {str(e)}")
                 results.append({
@@ -113,7 +128,6 @@ async def scrape_android(urls: UrlList):
 @app.post("/scrape/all")
 async def scrape_all(urls: UrlPair):
     try:
-        scraper = AppScraper()
         ios_results = []
         android_results = []
         ios_categories = {}
@@ -121,12 +135,18 @@ async def scrape_all(urls: UrlPair):
         # 先爬取 iOS 應用程式
         for url in urls.ios_urls:
             try:
-                result = await scraper.scrape_ios_app(url)
+                result = await run_scrape(scraper.scrape_ios_app, url)
                 if isinstance(result, AppInfo):
                     ios_categories[result.app_name] = result.category
                     ios_results.append(result.to_dict())
                 else:
                     ios_results.append(result)
+            except asyncio.TimeoutError:
+                logger.error(f"處理超時: {url}")
+                ios_results.append({
+                    "error": f"Request timeout after {SCRAPE_TIMEOUT} seconds",
+                    "url": url
+                })
             except Exception as e:
                 logger.error(f"處理 iOS URL 時出錯: {url}, 錯誤: {str(e)}")
                 ios_results.append({
@@ -137,8 +157,14 @@ async def scrape_all(urls: UrlPair):
         # 再爬取 Android 應用程式
         for url in urls.android_urls:
             try:
-                result = await scraper.scrape_android_app(url, ios_categories)
+                result = await run_scrape(scraper.scrape_android_app, url, ios_categories)
                 android_results.append(result.to_dict() if isinstance(result, AppInfo) else result)
+            except asyncio.TimeoutError:
+                logger.error(f"處理超時: {url}")
+                android_results.append({
+                    "error": f"Request timeout after {SCRAPE_TIMEOUT} seconds",
+                    "url": url
+                })
             except Exception as e:
                 logger.error(f"處理 Android URL 時出錯: {url}, 錯誤: {str(e)}")
                 android_results.append({
