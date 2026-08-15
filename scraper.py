@@ -133,85 +133,82 @@ class AppScraper:
                 wait = WebDriverWait(self.driver, 10)
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")), message="頁面加載超時")
 
-                # 應用程式名稱
+                # 應用程式名稱（App Store 現行版面是 Svelte 前端，class 為建置期產生的雜湊，不可靠；
+                # <title> 標籤格式固定為「《名稱》App - App Store」，穩定得多）
                 app_name = "未知名稱"
                 try:
-                    app_name_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1.product-header__title"))
-                    )
-                    app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
+                    title_match = re.search(r'《(.+?)》', self.driver.title)
+                    if title_match:
+                        app_name = title_match.group(1)
+                    else:
+                        h1_element = wait.until(EC.presence_of_element_located((By.TAG_NAME, "h1")))
+                        app_name = h1_element.text.strip()
                     logger.info(f"提取應用程式名稱: {app_name}")
                 except Exception as e:
-                    try:
-                        app_name_element = wait.until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__title"))
-                        )
-                        app_name = re.sub(r'\s+\d+\+$', '', app_name_element.text.strip())
-                        logger.info(f"使用備用選擇器提取應用程式名稱: {app_name}")
-                    except Exception as backup_e:
-                        logger.error(f"iOS - 提取應用程式名稱時出錯: {e}, 備用錯誤: {backup_e}")
+                    logger.error(f"iOS - 提取應用程式名稱時出錯: {e}")
 
-                # 應用程式類別
+                # 應用程式類別、開發者（在頁面底部「資訊」區塊的 dt/dd 結構中，比雜湊 class 穩定）
                 category = "未知類別"
                 try:
-                    category_elements = wait.until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".inline-list__item"))
+                    category_element = wait.until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//section[@id='information']//dt[normalize-space(text())='類別']/following-sibling::dd")
+                        )
                     )
-                    for element in category_elements:
-                        text = element.text.strip()
-                        if "「" in text and "」" in text:
-                            category_match = re.search(r'「(.+?)」', text)
-                            if category_match:
-                                category = category_match.group(1)
-                                break
+                    category = category_element.text.strip()
                     logger.info(f"提取類別: {category}")
                 except Exception as e:
                     logger.error(f"iOS - 提取類別時出錯: {e}")
 
-                # 開發者
                 developer = "未知開發者"
                 try:
                     developer_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".app-header__identity a, .product-header__identity a"))
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//section[@id='information']//dt[normalize-space(text())='供應商']/following-sibling::dd")
+                        )
                     )
                     developer = developer_element.text.strip()
                     logger.info(f"提取開發者: {developer}")
                 except Exception as e:
                     logger.error(f"iOS - 提取開發者時出錯: {e}")
 
-                # 評分資訊
+                # 評分資訊（帶有穩定的 data-testid）
                 rating = "未知評分"
                 rating_count = "未知評分數"
                 try:
                     rating_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".we-rating-count, .star-rating__count"))
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='amp-rating__average-rating']"))
                     )
-                    rating_info = rating_element.text.strip()
-                    rating_match = re.search(r'([\d.]+)\s*[•·]\s*([\d,.万]+)', rating_info)
-                    if rating_match:
-                        rating = rating_match.group(1)
-                        rating_count_raw = rating_match.group(2)
-                        if '万' in rating_count_raw:
-                            rating_count = int(float(rating_count_raw.replace('万', '')) * 10000)
-                        else:
-                            rating_count = int(rating_count_raw.replace(',', ''))
-                        rating_count = f"{rating_count:,}"
+                    rating = rating_element.text.strip()
+
+                    rating_count_element = self.driver.find_element(
+                        By.CSS_SELECTOR, "[data-testid='amp-rating__rating-count-text']"
+                    )
+                    rating_count_raw = rating_count_element.text.strip()
+                    count_match = re.search(r'([\d.]+)\s*(萬)?', rating_count_raw)
+                    if count_match:
+                        count_value = float(count_match.group(1))
+                        if count_match.group(2):
+                            count_value *= 10000
+                        rating_count = f"{int(count_value):,}"
                     else:
-                        rating = rating_info
+                        rating_count = rating_count_raw
                     logger.info(f"提取評分: {rating}, 評分數: {rating_count}")
                 except Exception as e:
                     logger.error(f"iOS - 提取評分時出錯: {e}")
 
-                # 價格
+                # 價格（免費 App 目前沒有獨立價格徽章，資訊夾在 h1 後方的敘述段落中）
                 price = "未知價格"
                 try:
-                    price_elements = wait.until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".inline-list__item"))
-                    )
-                    for element in price_elements:
-                        text = element.text.strip()
-                        if "免費" in text or "$" in text:
-                            price = text
+                    attribute_paragraphs = self.driver.find_elements(By.CSS_SELECTOR, "h1 ~ p")
+                    for p_element in attribute_paragraphs:
+                        text = p_element.text.strip()
+                        if "免費" in text:
+                            price = "免費"
+                            break
+                        price_match = re.search(r'(NT\$\s?[\d,]+|\$[\d,.]+)', text)
+                        if price_match:
+                            price = price_match.group(1)
                             break
                     logger.info(f"提取價格: {price}")
                 except Exception as e:
@@ -228,51 +225,24 @@ class AppScraper:
                         icon_url = icon_srcset.split(",")[0].split(" ")[0]
                     logger.info(f"提取圖示 URL: {icon_url}")
                 except Exception as e:
-                    try:
-                        icon_element = wait.until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, ".we-artwork__source"))
-                        )
-                        icon_url = icon_element.get_attribute("srcset").split(",")[0].split(" ")[0]
-                        logger.info(f"使用備用選擇器提取圖示 URL: {icon_url}")
-                    except Exception as backup_e:
-                        logger.error(f"iOS - 提取圖示URL時出錯: {e}, 備用錯誤: {backup_e}")
+                    logger.error(f"iOS - 提取圖示URL時出錯: {e}")
 
-                # 版本資訊和更新日期
+                # 版本資訊和更新日期（「新功能」區塊已直接顯示最新版本，不需要再點擊版本歷史按鈕）
                 version = "未知版本"
                 update_date = "未知更新日期"
                 try:
-                    logger.info("嘗試點擊版本紀錄按鈕")
-                    version_button = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "button.we-modal__show.link"))
-                    )
-                    self.driver.execute_script("arguments[0].click();", version_button)
-                    
-                    logger.info("等待版本歷史視窗加載")
-                    wait.until(
-                        EC.visibility_of_element_located((By.CSS_SELECTOR, ".version-history__item__version-number")),
-                        message="版本歷史視窗未正確加載"
-                    )
-
                     version_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".version-history__item__version-number"))
-                    )
-                    version = version_element.text.strip()
-
-                    date_element = wait.until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".version-history__item__release-date"))
-                    )
-                    update_date = date_element.text.strip()
-                    logger.info(f"提取版本: {version}, 更新日期: {update_date}")
-
-                    try:
-                        close_button = wait.until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, ".we-modal__close"))
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, "#mostRecentVersion .container.overview .metadata span")
                         )
-                        self.driver.execute_script("arguments[0].click();", close_button)
-                        logger.info("成功關閉版本歷史視窗")
-                    except Exception:
-                        logger.warning("iOS - 關閉版本歷史視窗失敗，但繼續執行")
+                    )
+                    version = re.sub(r'^版本\s*', '', version_element.text.strip())
 
+                    date_element = self.driver.find_element(
+                        By.CSS_SELECTOR, "#mostRecentVersion .container.overview .metadata time"
+                    )
+                    update_date = date_element.get_attribute("datetime") or date_element.text.strip()
+                    logger.info(f"提取版本: {version}, 更新日期: {update_date}")
                 except Exception as e:
                     logger.error(f"iOS - 提取版本或更新日期時出錯: {e}")
 
