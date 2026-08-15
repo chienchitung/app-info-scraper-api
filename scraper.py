@@ -122,7 +122,7 @@ class AppScraper:
     def calculate_similarity(self, str1: str, str2: str) -> float:
         return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
-    async def scrape_ios_app(self, url: str) -> AppInfo:
+    def scrape_ios_app(self, url: str) -> AppInfo:
         max_retries = 3
         retry_count = 0
         
@@ -299,7 +299,7 @@ class AppScraper:
                     raise
                 time.sleep(2)
 
-    async def scrape_android_app(self, url: str, ios_app_categories: Dict[str, str] = None) -> AppInfo:
+    def scrape_android_app(self, url: str, ios_app_categories: Dict[str, str] = None) -> AppInfo:
         max_retries = 3
         retry_count = 0
         
@@ -509,7 +509,16 @@ class AppScraper:
 
         return best_match, highest_similarity
 
+    def close(self):
+        driver = getattr(self, 'driver', None)
+        if driver:
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.warning(f"關閉 WebDriver 時發生錯誤: {e}")
+            finally:
+                self.driver = None
+                logger.info("WebDriver 已關閉")
+
     def __del__(self):
-        if hasattr(self, 'driver'):
-            self.driver.quit()
-            logger.info("WebDriver 已關閉")
+        self.close()
