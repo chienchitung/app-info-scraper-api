@@ -221,7 +221,6 @@ curl -X POST http://localhost:8000/scrape/ios \
     "rating_count": "評分數量",
     "price": "價格",
     "icon_url": "圖示 URL",
-    "version": "版本號",
     "update_date": "更新日期"
 }
 ```
