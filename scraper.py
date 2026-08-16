@@ -121,6 +121,14 @@ class AppScraper:
     def calculate_similarity(self, str1: str, str2: str) -> float:
         return SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
+    def restart_driver(self):
+        """在每次爬取前重啟 WebDriver。Chrome process 存活越久、載入過的頁面越多，
+        記憶體只增不減；同一顆 Chrome 連續爬 iOS 又爬 Android，兩個 JS 很重的 SPA
+        疊加的記憶體很容易把 Render 的記憶體上限撐爆並觸發 OOM 重啟。每次都用乾淨的
+        Chrome process，可以把每次請求的記憶體用量壓回「單一頁面」的基準線。"""
+        self.close()
+        self.setup_driver()
+
     def _get_android_json_ld(self) -> dict:
         """解析 Google Play 頁面內嵌的 Schema.org JSON-LD 結構化資料。
         比起會隨版面更新而改變的 hashed CSS class，這是較穩定的備援資料來源。"""
@@ -140,9 +148,10 @@ class AppScraper:
     def scrape_ios_app(self, url: str) -> AppInfo:
         max_retries = 3
         retry_count = 0
-        
+
         while retry_count < max_retries:
             try:
+                self.restart_driver()
                 logger.info(f"開始爬取 iOS 應用程式: {url}")
                 self.driver.get(url)
                 wait = WebDriverWait(self.driver, 10)
@@ -289,6 +298,7 @@ class AppScraper:
         
         while retry_count < max_retries:
             try:
+                self.restart_driver()
                 logger.info(f"開始爬取 Android 應用程式: {url}")
                 self.driver.get(url)
                 wait = WebDriverWait(self.driver, 20)
