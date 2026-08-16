@@ -48,7 +48,6 @@ class AppInfo(BaseModel):
     rating_count: str
     price: str
     icon_url: str
-    version: Optional[str] = None
     update_date: Optional[str] = None
     ios_similar_app: Optional[str] = None
     similarity: Optional[str] = None
@@ -63,7 +62,6 @@ class AppInfo(BaseModel):
             "rating_count": self.rating_count,
             "price": self.price,
             "icon_url": self.icon_url,
-            "version": self.version,
             "update_date": self.update_date,
             "ios_similar_app": self.ios_similar_app,
             "similarity": self.similarity
@@ -244,24 +242,18 @@ class AppScraper:
                 except Exception as e:
                     logger.error(f"iOS - 提取圖示URL時出錯: {e}")
 
-                # 版本資訊和更新日期（「新功能」區塊已直接顯示最新版本，不需要再點擊版本歷史按鈕）
-                version = "未知版本"
+                # 更新日期（「新功能」區塊已直接顯示最新更新日期）
                 update_date = "未知更新日期"
                 try:
-                    version_element = wait.until(
+                    date_element = wait.until(
                         EC.presence_of_element_located(
-                            (By.CSS_SELECTOR, "#mostRecentVersion .container.overview .metadata span")
+                            (By.CSS_SELECTOR, "#mostRecentVersion .container.overview .metadata time")
                         )
                     )
-                    version = re.sub(r'^版本\s*', '', version_element.text.strip())
-
-                    date_element = self.driver.find_element(
-                        By.CSS_SELECTOR, "#mostRecentVersion .container.overview .metadata time"
-                    )
                     update_date = date_element.get_attribute("datetime") or date_element.text.strip()
-                    logger.info(f"提取版本: {version}, 更新日期: {update_date}")
+                    logger.info(f"提取更新日期: {update_date}")
                 except Exception as e:
-                    logger.error(f"iOS - 提取版本或更新日期時出錯: {e}")
+                    logger.error(f"iOS - 提取更新日期時出錯: {e}")
 
                 app_info = AppInfo(
                     platform="iOS",
@@ -272,7 +264,6 @@ class AppScraper:
                     rating_count=rating_count,
                     price=price,
                     icon_url=icon_url,
-                    version=version,
                     update_date=update_date
                 )
                 logger.info(f"iOS 應用程式爬取完成: {app_name}")
@@ -457,18 +448,6 @@ class AppScraper:
                 except Exception as e:
                     logger.error(f"Android - 提取更新日期時出錯: {e}")
 
-                # 版本號：Google Play 目前的頁面版型已不再公開顯示應用程式版本號，
-                # 若頁面仍提供則嘗試抓取，抓不到視為正常情況（非錯誤）
-                version = "未知版本"
-                try:
-                    version_element = self.driver.find_element(
-                        By.XPATH, "//div[text()='目前版本' or text()='版本']/following-sibling::div[1]"
-                    )
-                    version = version_element.text.strip()
-                    logger.info(f"提取版本: {version}")
-                except Exception:
-                    logger.info("Android - 頁面未提供版本號資訊（Google Play 新版型的常見情況）")
-
                 app_info = AppInfo(
                     platform="Android",
                     app_name=app_name,
@@ -478,7 +457,6 @@ class AppScraper:
                     rating_count=rating_count,
                     price=price,
                     icon_url=icon_url,
-                    version=version,
                     update_date=update_date
                 )
 
